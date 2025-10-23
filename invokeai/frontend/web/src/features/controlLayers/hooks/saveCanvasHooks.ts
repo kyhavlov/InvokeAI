@@ -15,6 +15,7 @@ import {
   rgAdded,
   rgRefImageImageChanged,
 } from 'features/controlLayers/store/canvasSlice';
+import { selectLoRAsSlice } from 'features/controlLayers/store/lorasSlice';
 import {
   selectMainModelConfig,
   selectNegativePrompt,
@@ -89,6 +90,10 @@ const useSaveCanvas = ({ region, saveToGallery, toastOk, toastError, onSave, wit
       metadata.positive_prompt = selectPositivePrompt(state);
       metadata.negative_prompt = selectNegativePrompt(state);
       metadata.seed = selectSeed(state);
+      const enabledLoras = selectLoRAsSlice(state).loras.filter((lora) => lora.isEnabled);
+      if (enabledLoras.length > 0) {
+        metadata.loras = enabledLoras.map(({ model, weight }) => ({ model, weight }));
+      }
       const model = selectMainModelConfig(state);
       if (model) {
         metadata.model = Graph.getModelMetadataField(model);
