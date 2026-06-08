@@ -19,6 +19,7 @@ from invokeai.backend.patches.layers.utils import any_lora_layer_from_state_dict
 from invokeai.backend.patches.lora_conversions.anima_lora_constants import (
     ANIMA_LORA_QWEN3_PREFIX,
     ANIMA_LORA_TRANSFORMER_PREFIX,
+    has_anima_diffusers_transformer_keys,
     has_cosmos_dit_kohya_keys,
     has_cosmos_dit_peft_keys,
 )
@@ -41,7 +42,7 @@ def is_state_dict_likely_anima_lora(state_dict: dict[str | int, torch.Tensor]) -
     if has_cosmos_dit_kohya_keys(str_keys):
         return True
 
-    return has_cosmos_dit_peft_keys(str_keys)
+    return has_cosmos_dit_peft_keys(str_keys) or has_anima_diffusers_transformer_keys(str_keys)
 
 
 # Mapping from Kohya underscore-style substrings to model parameter names.
@@ -73,6 +74,29 @@ _KOHYA_TE_KEY_REPLACEMENTS = [
     ("mlp_down_proj", "mlp.down_proj"),
     ("mlp_gate_proj", "mlp.gate_proj"),
     ("mlp_up_proj", "mlp.up_proj"),
+]
+
+_DIFFUSERS_TRANSFORMER_KEY_REPLACEMENTS = [
+    ("norm1.linear_1", "adaln_modulation_self_attn.1"),
+    ("norm1.linear_2", "adaln_modulation_self_attn.2"),
+    ("attn1.norm_q", "self_attn.q_norm"),
+    ("attn1.norm_k", "self_attn.k_norm"),
+    ("attn1.to_q", "self_attn.q_proj"),
+    ("attn1.to_k", "self_attn.k_proj"),
+    ("attn1.to_v", "self_attn.v_proj"),
+    ("attn1.to_out.0", "self_attn.output_proj"),
+    ("norm2.linear_1", "adaln_modulation_cross_attn.1"),
+    ("norm2.linear_2", "adaln_modulation_cross_attn.2"),
+    ("attn2.norm_q", "cross_attn.q_norm"),
+    ("attn2.norm_k", "cross_attn.k_norm"),
+    ("attn2.to_q", "cross_attn.q_proj"),
+    ("attn2.to_k", "cross_attn.k_proj"),
+    ("attn2.to_v", "cross_attn.v_proj"),
+    ("attn2.to_out.0", "cross_attn.output_proj"),
+    ("norm3.linear_1", "adaln_modulation_mlp.1"),
+    ("norm3.linear_2", "adaln_modulation_mlp.2"),
+    ("ff.net.0.proj", "mlp.layer1"),
+    ("ff.net.2", "mlp.layer2"),
 ]
 
 
@@ -131,6 +155,18 @@ def _convert_kohya_te_key(kohya_layer_name: str) -> str:
     return key
 
 
+def _convert_diffusers_transformer_key(layer_key: str) -> str:
+    """Convert OneTrainer/diffusers Anima layer paths to Invoke's native Anima paths."""
+    key = re.sub(r"^transformer_blocks\.(\d+)\.", r"blocks.\1.", layer_key)
+
+    for old, new in _DIFFUSERS_TRANSFORMER_KEY_REPLACEMENTS:
+        if old in key:
+            key = key.replace(old, new, 1)
+            break
+
+    return key
+
+
 def _make_layer_patch(layer_dict: dict[str, torch.Tensor]) -> BaseLayerPatch:
     """Create a layer patch from a layer dict, handling DoRA+LoKR edge case.
 
@@ -153,7 +189,13 @@ _KOHYA_KNOWN_SUFFIXES = [
     ".lora_B.weight",
     ".lora_down.weight",
     ".lora_up.weight",
+    ".diff",
+    ".oft_R.weight",
+    ".oft_R.scaled_oft",
     ".dora_scale",
+    ".dora_multiplier",
+    ".dora_log_multiplier",
+    ".initial_norm",
     ".alpha",
 ]
 
@@ -292,6 +334,7 @@ def lora_model_from_anima_state_dict(state_dict: Dict[str, torch.Tensor], alpha:
             if is_text_encoder:
                 final_key = f"{ANIMA_LORA_QWEN3_PREFIX}{clean_key}"
             else:
+                clean_key = _convert_diffusers_transformer_key(clean_key)
                 final_key = f"{ANIMA_LORA_TRANSFORMER_PREFIX}{clean_key}"
 
             layer = _make_layer_patch(values)

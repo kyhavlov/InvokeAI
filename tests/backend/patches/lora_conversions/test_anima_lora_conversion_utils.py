@@ -1,9 +1,12 @@
 import pytest
 import torch
 
+from invokeai.backend.patches.layers.full_layer import FullLayer
+from invokeai.backend.patches.layers.oft_layer import OFTLayer
 from invokeai.backend.patches.lora_conversions.anima_lora_constants import (
     ANIMA_LORA_QWEN3_PREFIX,
     ANIMA_LORA_TRANSFORMER_PREFIX,
+    has_anima_diffusers_transformer_keys,
 )
 from invokeai.backend.patches.lora_conversions.anima_lora_conversion_utils import (
     _convert_kohya_te_key,
@@ -81,6 +84,15 @@ def test_is_state_dict_likely_anima_lora_false_for_random():
         "another_key.bias": torch.empty([64]),
     }
     assert not is_state_dict_likely_anima_lora(state_dict)
+
+
+def test_is_state_dict_likely_anima_lora_true_for_onetrainer_diffusers_oft():
+    state_dict = {
+        "transformer.transformer_blocks.0.attn1.to_k.oft_R.weight": torch.empty([64, 496]),
+        "transformer.transformer_blocks.0.attn1.to_k.dora_scale": torch.empty([2048, 1]),
+    }
+    assert has_anima_diffusers_transformer_keys(list(state_dict.keys()))
+    assert is_state_dict_likely_anima_lora(state_dict)
 
 
 # --- Kohya Key Conversion Tests ---
@@ -208,6 +220,128 @@ def test_lokr_dora_keys_dont_crash():
     state_dict = keys_to_mock_state_dict(anima_lokr_keys)
     lora_model = lora_model_from_anima_state_dict(state_dict)
     assert len(lora_model.layers) > 0
+
+
+def test_anima_doft_keys_create_oft_layer():
+    state_dict = {
+        "transformer.blocks.0.cross_attn.k_proj.oft_R.weight": torch.empty(2, 1),
+        "transformer.blocks.0.cross_attn.k_proj.oft_R.scaled_oft": torch.empty(0),
+        "transformer.blocks.0.cross_attn.k_proj.dora_scale": torch.empty(3, 1),
+        "transformer.blocks.0.cross_attn.k_proj.initial_norm": torch.empty(3, 1),
+    }
+
+    lora_model = lora_model_from_anima_state_dict(state_dict)
+
+    layer = lora_model.layers[f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.cross_attn.k_proj"]
+    assert isinstance(layer, OFTLayer)
+    assert layer.is_scaled
+    assert layer.dora_scale is state_dict["transformer.blocks.0.cross_attn.k_proj.dora_scale"]
+    assert layer.initial_norm is state_dict["transformer.blocks.0.cross_attn.k_proj.initial_norm"]
+
+
+def test_anima_onetrainer_diffusers_doft_keys_create_oft_layer():
+    state_dict = {
+        "transformer.transformer_blocks.0.attn1.to_k.oft_R.weight": torch.empty(64, 496),
+        "transformer.transformer_blocks.0.attn1.to_k.oft_R.scaled_oft": torch.empty(0),
+        "transformer.transformer_blocks.0.attn1.to_k.dora_multiplier": torch.empty(2048),
+    }
+
+    lora_model = lora_model_from_anima_state_dict(state_dict)
+
+    layer = lora_model.layers[f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.self_attn.k_proj"]
+    assert isinstance(layer, OFTLayer)
+    assert layer.is_scaled
+    assert layer.dora_multiplier is state_dict["transformer.transformer_blocks.0.attn1.to_k.dora_multiplier"]
+
+
+def test_anima_onetrainer_diffusers_doft_multiplier_keys_are_grouped_by_projection():
+    state_dict = {
+        "transformer.transformer_blocks.0.attn1.to_k.oft_R.weight": torch.empty(32, 2016),
+        "transformer.transformer_blocks.0.attn1.to_k.oft_R.scaled_oft": torch.empty(()),
+        "transformer.transformer_blocks.0.attn1.to_k.dora_multiplier": torch.empty(2048),
+        "transformer.transformer_blocks.0.attn1.to_q.oft_R.weight": torch.empty(32, 2016),
+        "transformer.transformer_blocks.0.attn1.to_q.oft_R.scaled_oft": torch.empty(()),
+        "transformer.transformer_blocks.0.attn1.to_q.dora_multiplier": torch.empty(2048),
+        "transformer.transformer_blocks.0.attn1.to_v.oft_R.weight": torch.empty(32, 2016),
+        "transformer.transformer_blocks.0.attn1.to_v.oft_R.scaled_oft": torch.empty(()),
+        "transformer.transformer_blocks.0.attn1.to_v.dora_multiplier": torch.empty(2048),
+    }
+
+    lora_model = lora_model_from_anima_state_dict(state_dict)
+
+    assert set(lora_model.layers.keys()) == {
+        f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.self_attn.k_proj",
+        f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.self_attn.q_proj",
+        f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.self_attn.v_proj",
+    }
+
+
+def test_anima_onetrainer_diffusers_doft_log_multiplier_keys_are_grouped_by_projection():
+    state_dict = {
+        "transformer.transformer_blocks.0.attn1.to_k.oft_R.weight": torch.empty(16, 8128),
+        "transformer.transformer_blocks.0.attn1.to_k.oft_R.scaled_oft": torch.empty(()),
+        "transformer.transformer_blocks.0.attn1.to_k.dora_log_multiplier": torch.empty(2048),
+        "transformer.transformer_blocks.0.attn1.to_q.oft_R.weight": torch.empty(16, 8128),
+        "transformer.transformer_blocks.0.attn1.to_q.oft_R.scaled_oft": torch.empty(()),
+        "transformer.transformer_blocks.0.attn1.to_q.dora_log_multiplier": torch.empty(2048),
+        "transformer.transformer_blocks.0.attn1.to_v.oft_R.weight": torch.empty(16, 8128),
+        "transformer.transformer_blocks.0.attn1.to_v.oft_R.scaled_oft": torch.empty(()),
+        "transformer.transformer_blocks.0.attn1.to_v.dora_log_multiplier": torch.empty(2048),
+    }
+
+    lora_model = lora_model_from_anima_state_dict(state_dict)
+
+    assert set(lora_model.layers.keys()) == {
+        f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.self_attn.k_proj",
+        f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.self_attn.q_proj",
+        f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.self_attn.v_proj",
+    }
+    assert all(isinstance(layer, OFTLayer) and layer.dora_log_multiplier is not None for layer in lora_model.layers.values())
+
+
+@pytest.mark.parametrize(
+    ["diffusers_key", "expected_key"],
+    [
+        ("transformer.transformer_blocks.0.attn1.to_out.0.oft_R.weight", "blocks.0.self_attn.output_proj"),
+        ("transformer.transformer_blocks.0.attn2.to_out.0.oft_R.weight", "blocks.0.cross_attn.output_proj"),
+        ("transformer.transformer_blocks.0.ff.net.0.proj.oft_R.weight", "blocks.0.mlp.layer1"),
+        ("transformer.transformer_blocks.0.ff.net.2.oft_R.weight", "blocks.0.mlp.layer2"),
+    ],
+)
+def test_anima_onetrainer_diffusers_keys_are_mapped_to_native_anima_names(
+    diffusers_key: str, expected_key: str
+):
+    state_dict = {diffusers_key: torch.empty(2, 1)}
+
+    lora_model = lora_model_from_anima_state_dict(state_dict)
+
+    assert f"{ANIMA_LORA_TRANSFORMER_PREFIX}{expected_key}" in lora_model.layers
+
+
+def test_anima_kohya_oft_keys_create_oft_layer():
+    state_dict = {
+        "lora_unet_blocks_0_cross_attn_k_proj.oft_R.weight": torch.empty(2, 1),
+    }
+
+    lora_model = lora_model_from_anima_state_dict(state_dict)
+
+    layer = lora_model.layers[f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.cross_attn.k_proj"]
+    assert isinstance(layer, OFTLayer)
+
+
+def test_anima_diff_keys_create_full_layers_for_norm_targets():
+    state_dict = {
+        "diffusion_model.blocks.0.cross_attn.k_norm.diff": torch.empty(128),
+        "diffusion_model.blocks.0.cross_attn.q_norm.diff": torch.empty(128),
+    }
+
+    lora_model = lora_model_from_anima_state_dict(state_dict)
+
+    assert set(lora_model.layers.keys()) == {
+        f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.cross_attn.k_norm",
+        f"{ANIMA_LORA_TRANSFORMER_PREFIX}blocks.0.cross_attn.q_norm",
+    }
+    assert all(isinstance(layer, FullLayer) for layer in lora_model.layers.values())
 
 
 def test_peft_keys_get_transformer_prefix():

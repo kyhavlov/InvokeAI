@@ -32,6 +32,7 @@ from invokeai.backend.model_manager.taxonomy import (
 )
 from invokeai.backend.model_manager.util.model_util import lora_token_vector_length
 from invokeai.backend.patches.lora_conversions.anima_lora_constants import (
+    has_anima_diffusers_transformer_keys,
     has_cosmos_dit_kohya_keys,
     has_cosmos_dit_peft_keys,
 )
@@ -841,8 +842,9 @@ class LoRA_LyCORIS_QwenImage_Config(LoRA_LyCORIS_Config_Base, Config_Base):
                 "lora_unet_single_transformer_blocks_",
             },
         )
+        has_anima_keys = has_anima_diffusers_transformer_keys([k for k in state_dict.keys() if isinstance(k, str)])
 
-        if has_qwen_ie_keys and has_lora_suffix and not has_z_image_keys and not has_flux_keys:
+        if has_qwen_ie_keys and has_lora_suffix and not has_z_image_keys and not has_flux_keys and not has_anima_keys:
             return
 
         raise NotAMatchError("model does not match Qwen Image LoRA heuristics")
@@ -867,8 +869,9 @@ class LoRA_LyCORIS_QwenImage_Config(LoRA_LyCORIS_Config_Base, Config_Base):
                 "lora_unet_single_transformer_blocks_",
             },
         )
+        has_anima_keys = has_anima_diffusers_transformer_keys([k for k in state_dict.keys() if isinstance(k, str)])
 
-        if has_qwen_ie_keys and not has_z_image_keys and not has_flux_keys:
+        if has_qwen_ie_keys and not has_z_image_keys and not has_flux_keys and not has_anima_keys:
             return BaseModelType.QwenImage
         raise NotAMatchError("model does not look like a Qwen Image Edit LoRA")
 
@@ -894,7 +897,11 @@ class LoRA_LyCORIS_Anima_Config(LoRA_LyCORIS_Config_Base, Config_Base):
         state_dict = mod.load_state_dict()
         str_keys = [k for k in state_dict.keys() if isinstance(k, str)]
 
-        has_cosmos_keys = has_cosmos_dit_kohya_keys(str_keys) or has_cosmos_dit_peft_keys(str_keys)
+        has_cosmos_keys = (
+            has_cosmos_dit_kohya_keys(str_keys)
+            or has_cosmos_dit_peft_keys(str_keys)
+            or has_anima_diffusers_transformer_keys(str_keys)
+        )
 
         # Also check for LoRA/LoKR weight suffixes
         has_lora_suffix = state_dict_has_any_keys_ending_with(
@@ -904,7 +911,11 @@ class LoRA_LyCORIS_Anima_Config(LoRA_LyCORIS_Config_Base, Config_Base):
                 "lora_B.weight",
                 "lora_down.weight",
                 "lora_up.weight",
+                "diff",
+                "oft_R.weight",
                 "dora_scale",
+                "dora_multiplier",
+                "dora_log_multiplier",
                 ".lokr_w1",
                 ".lokr_w2",
             },
@@ -924,7 +935,11 @@ class LoRA_LyCORIS_Anima_Config(LoRA_LyCORIS_Config_Base, Config_Base):
         state_dict = mod.load_state_dict()
         str_keys = [k for k in state_dict.keys() if isinstance(k, str)]
 
-        if has_cosmos_dit_kohya_keys(str_keys) or has_cosmos_dit_peft_keys(str_keys):
+        if (
+            has_cosmos_dit_kohya_keys(str_keys)
+            or has_cosmos_dit_peft_keys(str_keys)
+            or has_anima_diffusers_transformer_keys(str_keys)
+        ):
             return BaseModelType.Anima
 
         raise NotAMatchError("model does not look like an Anima LoRA")

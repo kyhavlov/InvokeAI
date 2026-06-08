@@ -10,12 +10,15 @@ from invokeai.backend.patches.layers.loha_layer import LoHALayer
 from invokeai.backend.patches.layers.lokr_layer import LoKRLayer
 from invokeai.backend.patches.layers.lora_layer import LoRALayer
 from invokeai.backend.patches.layers.norm_layer import NormLayer
+from invokeai.backend.patches.layers.oft_layer import OFTLayer
 
 
 def any_lora_layer_from_state_dict(state_dict: Dict[str, torch.Tensor]) -> BaseLayerPatch:
     # Detect layers according to LyCORIS detection logic(`weight_list_det`)
     # https://github.com/KohakuBlueleaf/LyCORIS/tree/8ad8000efb79e2b879054da8c9356e6143591bad/lycoris/modules
-    if "dora_scale" in state_dict:
+    if "oft_R.weight" in state_dict:
+        return OFTLayer.from_state_dict_values(state_dict)
+    elif "dora_scale" in state_dict:
         return DoRALayer.from_state_dict_values(state_dict)
     elif "lora_up.weight" in state_dict:
         # LoRA a.k.a LoCon

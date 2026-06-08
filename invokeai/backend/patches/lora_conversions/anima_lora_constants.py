@@ -28,6 +28,12 @@ _PEFT_ANIMA_RE = re.compile(
     r"(diffusion_model|transformer|base_model\.model\.transformer)\.blocks\.\d+\." + _COSMOS_DIT_SUBCOMPONENTS_RE
 )
 
+# Diffusers-format Anima transformer LoRAs use CosmosTransformer3DModel block names:
+# transformer.transformer_blocks.N.attn1/attn2/ff...
+_DIFFUSERS_ANIMA_RE = re.compile(
+    r"(transformer|base_model\.model\.transformer)\.transformer_blocks\.\d+\.(attn1|attn2|ff)"
+)
+
 
 def has_cosmos_dit_kohya_keys(str_keys: list[str]) -> bool:
     """Check for Kohya-style keys targeting Cosmos DiT blocks with specific subcomponents.
@@ -43,3 +49,8 @@ def has_cosmos_dit_kohya_keys(str_keys: list[str]) -> bool:
 def has_cosmos_dit_peft_keys(str_keys: list[str]) -> bool:
     """Check for diffusers PEFT keys targeting Cosmos DiT blocks with specific subcomponents."""
     return any(_PEFT_ANIMA_RE.search(k) is not None for k in str_keys)
+
+
+def has_anima_diffusers_transformer_keys(str_keys: list[str]) -> bool:
+    """Check for OneTrainer/diffusers Anima transformer LoRA keys."""
+    return any(_DIFFUSERS_ANIMA_RE.search(k) is not None for k in str_keys)
