@@ -60,6 +60,7 @@ class ObjectSerializerDisk(ObjectSerializerBase[T]):
     def save(self, obj: T) -> str:
         name = self._new_name()
         file_path = self._get_path(name)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(obj, file_path)  # pyright: ignore [reportUnknownMemberType]
         return name
 
