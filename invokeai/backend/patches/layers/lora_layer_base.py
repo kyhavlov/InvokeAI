@@ -69,8 +69,9 @@ class LoRALayerBase(BaseLayerPatch):
         # Reshape all params to match the original module's shape.
         for param_name, param_weight in params.items():
             orig_param = orig_parameters[param_name]
-            if param_weight.shape != get_param_shape(orig_param):
-                params[param_name] = param_weight.reshape(get_param_shape(orig_param))
+            orig_shape = get_param_shape(orig_param)
+            if param_weight.shape != orig_shape and param_weight.nelement() == orig_shape.numel():
+                params[param_name] = param_weight.reshape(orig_shape)
 
         return params
 

@@ -119,15 +119,20 @@ class LayerPatcher:
             # TODO(ryand): Handle the case where we are running without a GPU. Should we set a config flag that allows
             # forcing full patching even on the CPU?
             use_sidecar_patching = False
+            module_supports_sidecar_patching = all(
+                hasattr(module, attr) for attr in ("add_patch", "clear_patches", "get_num_patches")
+            )
             if force_direct_patching and force_sidecar_patching:
                 raise ValueError("Cannot force both direct and sidecar patching.")
             elif force_direct_patching:
                 use_sidecar_patching = False
             elif force_sidecar_patching:
+                if not module_supports_sidecar_patching:
+                    raise ValueError(f"Cannot use sidecar patching for module without sidecar support: {module_key}")
                 use_sidecar_patching = True
-            elif module.get_num_patches() > 0:
+            elif module_supports_sidecar_patching and module.get_num_patches() > 0:
                 use_sidecar_patching = True
-            elif LayerPatcher._is_any_part_of_layer_on_cpu(module):
+            elif module_supports_sidecar_patching and LayerPatcher._is_any_part_of_layer_on_cpu(module):
                 use_sidecar_patching = True
 
             if use_sidecar_patching:
