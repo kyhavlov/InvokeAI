@@ -740,7 +740,12 @@ class _ExecutionRuntime:
 
     def _sort_collect_input_edges(self, input_edges: list[Edge], field_name: str) -> list[Edge]:
         matching_edges = [edge for edge in input_edges if edge.destination.field == field_name]
-        matching_edges.sort(key=lambda edge: (self.get_iteration_path(edge.source.node_id), edge.source.node_id))
+        matching_edges.sort(
+            key=lambda edge: (
+                self.get_iteration_path(edge.source.node_id),
+                self._state.prepared_source_mapping.get(edge.source.node_id, edge.source.node_id),
+            )
+        )
         return matching_edges
 
     def _get_copied_result_value(self, edge: Edge) -> Any:

@@ -144,6 +144,25 @@ def test_graph_state_collects():
     assert sorted(g.results[n6[0].id].collection) == sorted(test_prompts)
 
 
+def test_graph_state_collects_items_by_source_node_id_not_prepared_id():
+    graph = Graph()
+    graph.add_node(PromptTestInvocation(id="pos_prompt:2", prompt="base"))
+    graph.add_node(PromptTestInvocation(id="prompt_region_positive_cond:3", prompt="cat"))
+    graph.add_node(PromptTestInvocation(id="prompt_region_positive_cond:f", prompt="dog"))
+    graph.add_node(CollectInvocation(id="collect"))
+
+    graph.add_edge(create_edge("pos_prompt:2", "prompt", "collect", "item"))
+    graph.add_edge(create_edge("prompt_region_positive_cond:3", "prompt", "collect", "item"))
+    graph.add_edge(create_edge("prompt_region_positive_cond:f", "prompt", "collect", "item"))
+
+    g = GraphExecutionState(graph=graph)
+    while not g.is_complete():
+        invoke_next(g)
+
+    prepared_collect_id = next(iter(g.source_prepared_mapping["collect"]))
+    assert g.results[prepared_collect_id].collection == ["base", "cat", "dog"]
+
+
 def test_graph_state_resumes_partially_executed_session_after_json_round_trip():
     graph = Graph()
     graph.add_node(RangeInvocation(id="c", start=1, stop=5, step=1))
