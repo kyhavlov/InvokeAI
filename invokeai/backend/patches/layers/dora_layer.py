@@ -2,9 +2,14 @@ from typing import Dict, Optional
 
 import torch
 
-from invokeai.backend.model_manager.load.model_cache.torch_module_autocast.cast_to_device import cast_to_device
 from invokeai.backend.patches.layers.lora_layer_base import LoRALayerBase
 from invokeai.backend.util.calc_tensor_size import calc_tensors_size
+
+
+def _cast_to_device(t: torch.Tensor, to_device: torch.device) -> torch.Tensor:
+    if t.device.type != to_device.type:
+        return t.to(to_device)
+    return t
 
 
 class DoRALayer(LoRALayerBase):
@@ -58,8 +63,36 @@ class DoRALayer(LoRALayerBase):
     def _rank(self) -> int:
         return self.down.shape[0]
 
+    def _get_dora_scale_and_direction_norm(self, out_weight: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        output_direction_norm = (
+            out_weight.reshape(out_weight.shape[0], -1)
+            .norm(dim=1, keepdim=True)
+            .reshape(out_weight.shape[0], *[1] * (out_weight.dim() - 1))
+        )
+
+        input_direction_norm = (
+            out_weight.transpose(0, 1)
+            .reshape(out_weight.shape[1], -1)
+            .norm(dim=1, keepdim=True)
+            .reshape(out_weight.shape[1], *[1] * (out_weight.dim() - 1))
+            .transpose(0, 1)
+        )
+
+        dora_scale = self.dora_scale
+        if dora_scale.shape == output_direction_norm.shape:
+            return dora_scale, output_direction_norm
+        if dora_scale.shape == input_direction_norm.shape:
+            return dora_scale, input_direction_norm
+        if dora_scale.numel() == out_weight.shape[0]:
+            return dora_scale.reshape(output_direction_norm.shape), output_direction_norm
+        if dora_scale.numel() == out_weight.shape[1]:
+            return dora_scale.reshape(input_direction_norm.shape), input_direction_norm
+
+        # Preserve the previous broadcast behavior for unusual DoRA scale shapes.
+        return dora_scale, input_direction_norm
+
     def get_weight(self, orig_weight: torch.Tensor) -> torch.Tensor:
-        orig_weight = cast_to_device(orig_weight, self.up.device)
+        orig_weight = _cast_to_device(orig_weight, self.up.device)
 
         # Note: Variable names (e.g. delta_v) are based on the paper.
         delta_v = self.up.reshape(self.up.shape[0], -1) @ self.down.reshape(self.down.shape[0], -1)
@@ -70,16 +103,8 @@ class DoRALayer(LoRALayerBase):
         # At this point, out_weight is the unnormalized direction matrix.
         out_weight = orig_weight + delta_v
 
-        # TODO(ryand): Simplify this logic.
-        direction_norm = (
-            out_weight.transpose(0, 1)
-            .reshape(out_weight.shape[1], -1)
-            .norm(dim=1, keepdim=True)
-            .reshape(out_weight.shape[1], *[1] * (out_weight.dim() - 1))
-            .transpose(0, 1)
-        )
-
-        out_weight *= self.dora_scale / direction_norm
+        dora_scale, direction_norm = self._get_dora_scale_and_direction_norm(out_weight)
+        out_weight *= dora_scale / direction_norm
 
         return out_weight - orig_weight
 
