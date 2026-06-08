@@ -11,6 +11,7 @@ from invokeai.backend.model_manager.load.model_cache.torch_module_autocast.torch
     apply_custom_layers_to_model,
 )
 from invokeai.backend.patches.layer_patcher import LayerPatcher
+from invokeai.backend.patches.layers.full_layer import FullLayer
 from invokeai.backend.patches.layers.lora_layer import LoRALayer
 from invokeai.backend.patches.model_patch_raw import ModelPatchRaw
 
@@ -211,6 +212,60 @@ def test_apply_smart_model_patches_mixed_dotted_and_dotless_keys():
     # Both layers were actually patched (output changed), and unpatching restored the original output.
     assert not torch.allclose(output_before_patch, output_during_patch)
     assert torch.allclose(output_before_patch, output_after_patch)
+
+
+class DummyModuleWithRMSNorm(torch.nn.Module):
+    def __init__(self, normalized_shape: int, device: str, dtype: torch.dtype):
+        super().__init__()
+        self.norm = torch.nn.RMSNorm(normalized_shape, device=device, dtype=dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.norm(x)
+
+
+@torch.no_grad()
+def test_apply_smart_model_patches_direct_patches_modules_without_sidecar_support():
+    dtype = torch.float32
+    model = DummyModuleWithRMSNorm(normalized_shape=4, device="cpu", dtype=dtype)
+    assert not hasattr(model.norm, "get_num_patches")
+
+    diff = torch.tensor([0.1, 0.2, 0.3, 0.4], dtype=dtype)
+    patch = ModelPatchRaw({"norm": FullLayer.from_state_dict_values({"diff": diff})})
+    orig_weight = model.norm.weight.detach().clone()
+
+    with LayerPatcher.apply_smart_model_patches(model=model, patches=[(patch, 1.0)], prefix="", dtype=dtype):
+        torch.testing.assert_close(model.norm.weight, orig_weight + diff)
+
+    torch.testing.assert_close(model.norm.weight, orig_weight)
+
+
+@torch.no_grad()
+def test_apply_smart_model_patches_skips_incompatible_lora_shape():
+    dtype = torch.float32
+    model = DummyModuleWithOneLayer(in_features=3, out_features=2, device="cpu", dtype=dtype)
+    orig_weight = model.linear_layer_1.weight.detach().clone()
+
+    patch = ModelPatchRaw(
+        {
+            "linear_layer_1": LoRALayer.from_state_dict_values(
+                {
+                    "lora_down.weight": torch.ones((1, 4), dtype=dtype),
+                    "lora_up.weight": torch.ones((2, 1), dtype=dtype),
+                }
+            )
+        }
+    )
+
+    with LayerPatcher.apply_smart_model_patches(
+        model=model,
+        patches=[(patch, 1.0)],
+        prefix="",
+        dtype=dtype,
+        force_direct_patching=True,
+    ):
+        torch.testing.assert_close(model.linear_layer_1.weight, orig_weight)
+
+    torch.testing.assert_close(model.linear_layer_1.weight, orig_weight)
 
 
 @pytest.mark.parametrize(
